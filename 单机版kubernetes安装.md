@@ -524,10 +524,235 @@ ETCDCTL_API=3 etcdctl \
 `kubectl create clusterrolebinding kube-apiserver:kubelet-apis --clusterrole=system:kubelet-api-admin --user kubernetes`
 
 
- 
+## kube-controller-manager安装
+
+#### 创建证书秘钥
+
+```
+
+cat > kube-controller-manager-csr.json <<EOF
+{
+    "CN": "system:kube-controller-manager",
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "hosts": [
+      "127.0.0.1",
+      "10.0.94.164"
+    ],
+    "names": [
+      {
+        "C": "CN",
+        "ST": "BeiJing",
+        "L": "BeiJing",
+        "O": "system:kube-controller-manager",
+        "OU": "4Paradigm"
+      }
+    ]
+}
+EOF
+
+```
+
+`cp kube-controller-manager*.pem /etc/kubernetes/cert`
+
+#### 创建和分发kube-controller-manager的配置文件
+
+```
+
+kubectl config set-cluster kubernetes \
+--certificate-authority=/etc/kubernetes/cert/ca.pem \
+--embed-certs=true \
+--server=https://10.0.94.164:6443 \
+--kubeconfig=kube-controller-manager.kubeconfig
+
+```
 
 
+```
+
+kubectl config set-credentials system:kube-controller-manager \
+--client-certificate=kube-controller-manager.pem \
+--client-key=kube-controller-manager-key.pem \
+--embed-certs=true \
+--kubeconfig=kube-controller-manager.kubeconfig
+
+```
+
+```
+kubectl config set-context system:kube-controller-manager \
+--cluster=kubernetes \
+--user=system:kube-controller-manager \
+--kubeconfig=kube-controller-manager.kubeconfig
+
+```
+
+```
+kubectl config use-context system:kube-controller-manager --kubeconfig=kube-controller-manager.kubeconfig
+```
+
+`cp kube-controller-manager.kubeconfig /etc/kubernetes`
 
 
+#### 创建和分发system unit 文件
+
+```
+
+cat > kube-controller-manager.service <<EOF
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+
+[Service]
+ExecStart=/opt/k8s/bin/kube-controller-manager \\
+  --kubeconfig=/etc/kubernetes/kube-controller-manager.kubeconfig \\
+  --service-cluster-ip-range=10.254.0.0/16 \\
+  --cluster-name=kubernetes \\
+  --cluster-signing-cert-file=/etc/kubernetes/cert/ca.pem \\
+  --cluster-signing-key-file=/etc/kubernetes/cert/ca-key.pem \\
+  --experimental-cluster-signing-duration=8760h \\
+  --root-ca-file=/etc/kubernetes/cert/ca.pem \\
+  --service-account-private-key-file=/etc/kubernetes/cert/ca-key.pem \\
+  --feature-gates=RotateKubeletServerCertificate=true \\
+  --controllers=*,bootstrapsigner,tokencleaner \\
+  --horizontal-pod-autoscaler-use-rest-clients=true \\
+  --horizontal-pod-autoscaler-sync-period=10s \\
+  --tls-cert-file=/etc/kubernetes/cert/kube-controller-manager.pem \\
+  --tls-private-key-file=/etc/kubernetes/cert/kube-controller-manager-key.pem \\
+  --use-service-account-credentials=true \\
+  --alsologtostderr=true \\
+  --logtostderr=false \\
+  --log-dir=/var/log/kubernetes \\
+  --v=2
+Restart=on
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+```
+
+`cp kube-controller-manager.service /etc/systemd/system`
+
+#### 启动controller-manager
+`systemctl daemon-reload && systemctl enable kube-controller-manager && systemctl restart kube-controller-manager`
 
 
+## 部署kube-scheduler集群
+
+#### 证书签名请求与创建证书
+
+```
+
+cat > kube-scheduler-csr.json <<EOF
+{
+    "CN": "system:kube-scheduler",
+    "hosts": [
+      "127.0.0.1",
+      "10.0.94.164"
+    ],
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+      {
+        "C": "CN",
+        "ST": "BeiJing",
+        "L": "BeiJing",
+        "O": "system:kube-scheduler",
+        "OU": "4Paradigm"
+      }
+    ]
+}
+EOF
+
+```
+
+```
+
+cfssl gencert -ca=/etc/kubernetes/cert/ca.pem \
+  -ca-key=/etc/kubernetes/cert/ca-key.pem \
+  -config=/etc/kubernetes/cert/ca-config.json \
+  -profile=kubernetes kube-scheduler-csr.json | cfssljson -bare kube-scheduler
+
+```
+
+#### 创建和分发kubeconfig文件
+
+```
+
+kubectl config set-cluster kubernetes \
+  --certificate-authority=/etc/kubernetes/cert/ca.pem \
+  --embed-certs=true \
+  --server=https://10.0.94.164:6443 \
+  --kubeconfig=kube-scheduler.kubeconfig
+
+```
+
+```
+
+kubectl config set-credentials system:kube-scheduler \
+  --client-certificate=kube-scheduler.pem \
+  --client-key=kube-scheduler-key.pem \
+  --embed-certs=true \
+  --kubeconfig=kube-scheduler.kubeconfig
+
+```
+
+```
+
+kubectl config set-context system:kube-scheduler \
+  --cluster=kubernetes \
+  --user=system:kube-scheduler \
+  --kubeconfig=kube-scheduler.kubeconfig
+
+kubectl config use-context system:kube-scheduler --kubeconfig=kube-scheduler.kubeconfig
+
+```
+
+`cp kube-scheduler.kubeconfig /etc/kubernetes`
+
+#### 创建和分发kube-scheduler system unit 文件
+
+```
+
+cat > kube-scheduler.service <<EOF
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+
+[Service]
+ExecStart=/opt/k8s/bin/kube-scheduler \\
+  --address=127.0.0.1 \\
+  --kubeconfig=/etc/kubernetes/kube-scheduler.kubeconfig \\
+  --alsologtostderr=true \\
+  --logtostderr=false \\
+  --log-dir=/var/log/kubernetes \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+```
+
+`cp kube-scheduler.service /etc/systemd/system`
+
+#### 启动kube-scheduler
+
+`systemctl daemon-reload && systemctl enable kube-scheduler && systemctl restart kube-scheduler`
+
+
+#### 查看输出metric
+
+`netstat -lnpt|grep 10251`
+
+`curl -s http://127.0.0.1:10251/metrics |head`
