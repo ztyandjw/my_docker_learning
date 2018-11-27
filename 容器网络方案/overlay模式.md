@@ -84,6 +84,8 @@ ip route add 172.18.10.0/24 dev flannel.1 scope global
 ip neighbor add 172.18.10.2 lladdr fe:82:1a:e3:f8:b6 dev flannel.1  
  bridge fdb append fe:82:1a:e3:f8:b6 dev flannel.1 dst 10.0.94.147
 
+ip route change 172.18.20.0/24 via 172.18.20.0 dev flannel.1  
+
 
 
 
